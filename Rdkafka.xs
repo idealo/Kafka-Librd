@@ -7,6 +7,20 @@
 #include "ppport.h"
 #include "rdkafkaxs.h"
 
+SV* loggerSV = NULL;
+
+static void logger (const rd_kafka_t *rk, int level,
+		    const char *fac, const char *buf) {
+        dSP;
+	PUSHMARK(SP);
+	EXTEND(SP, 3);
+	PUSHs(sv_2mortal(newSViv(level)));
+	PUSHs(sv_2mortal(newSVpv(fac, 0)));
+	PUSHs(sv_2mortal(newSVpv(buf, 0)));
+	PUTBACK;
+        call_sv(loggerSV, G_DISCARD);
+}
+
 MODULE = Kafka::Librd    PACKAGE = Kafka::Librd    PREFIX = krd_
 PROTOTYPES: DISABLE
 
@@ -315,6 +329,17 @@ krd_rd_kafka_wait_destroyed(timeout_ms)
         RETVAL = rd_kafka_wait_destroyed(timeout_ms);
     OUTPUT:
         RETVAL
+
+void
+krd_set_logger(rdk, cb)
+        rdkafka_t* rdk
+        SV* cb
+    CODE:
+        rd_kafka_conf_t* conf = (rd_kafka_conf_t*)rd_kafka_conf(rdk->rk); // XXX hmmm, removing const
+	if (loggerSV)
+	    SvREFCNT_dec(loggerSV);
+	loggerSV = newSVsv(cb); // XXX clone or not?
+        rd_kafka_conf_set_log_cb(conf, logger); // XXX only one for all...
 
 MODULE = Kafka::Librd    PACKAGE = Kafka::Librd::Topic    PREFIX = krdt_
 PROTOTYPES: DISABLE
