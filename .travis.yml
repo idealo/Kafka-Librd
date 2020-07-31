@@ -36,6 +36,6 @@ jobs:
 #  only:
 #    - main
 
-cache:
-  directories:
-    - "$HOME/.cip"
+#cache:
+#  directories:
+#    - "$HOME/.cip"
