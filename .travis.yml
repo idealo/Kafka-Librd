@@ -9,7 +9,8 @@ before_install:
 
 install:
   - cip diag
-  - cip install
+#  - cip install
+  - cip exec cpanm --verbose -n --installdeps .
 
 script:
   - cip script
