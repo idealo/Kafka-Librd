@@ -2,5 +2,6 @@
 
 set -ex
 
-#cip sudo apt-get update
+cip sudo apt-get update
+cip sudo apt-get -y install g++
 #cip sudo apt-get -y install librdkafka-dev
