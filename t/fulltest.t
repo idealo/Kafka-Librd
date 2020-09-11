@@ -5,6 +5,8 @@ use warnings;
 use Test::More;
 
 use File::Temp qw(tempdir);
+use Getopt::Long;
+use IO::Socket;
 use POSIX qw(WNOHANG);
 use Scalar::Util qw(looks_like_number);
 use Time::HiRes qw();
@@ -24,6 +26,13 @@ use Kafka::Librd qw();
 my $java = 'java';
 my $kafka_dir = "/opt/kafka";
 my $sample_topic = 'sampleTopic';
+my $debug = undef;
+
+GetOptions(
+    "kafka-dir=s" => \$kafka_dir,
+    "debug=s"     => \$debug,
+)
+    or die "usage: $0 [--kafka-dir /path/to/kafka] [--debug all|...]\n";
 
 if (!-d $kafka_dir) {
     plan skip_all => "No kafka server directory available (expected in $kafka_dir), cannot test";
@@ -42,12 +51,11 @@ my $producer = Kafka::Librd->new(
     {
 	'group.id' => 'producer_id',
 	'queue.buffering.max.messages' => 1,
-	#'debug' => 'all',
+	($debug ? ('debug' => $debug) : ()),
     }
 );
 isa_ok $producer, 'Kafka::Librd';
 $producer->brokers_add("localhost:$kafka_info->{port}");
-sleep 2; # XXX hmmm?
 note "Search for topic $sample_topic...";
 my $topic = $producer->topic($sample_topic, {});
 isa_ok $topic, 'Kafka::Librd::Topic';
@@ -57,8 +65,8 @@ $err = $topic->produce(-1, 0, $sample_payload, $sample_key);
 diag "Produced message...";
 $err and die "Couldn't produce: ", Kafka::Librd::Error::to_string($err);
 is $err, 0;
-sleep 2; # XXX hmmm?
 diag "About to destroy producer...";
+$producer->flush(10000);
 $producer->destroy; # hmmm - maybe I have to force a flush?
 
 my $consumer = Kafka::Librd->new(
@@ -68,7 +76,7 @@ my $consumer = Kafka::Librd->new(
 	'enable.auto.offset.store' => 0,
 	'enable.auto.commit'       => 0,
 	'auto.offset.reset'        => 'earliest',
-	#'debug' => 'all',
+	($debug ? ('debug' => $debug) : ()),
     },
 );
 isa_ok $consumer, 'Kafka::Librd';
@@ -170,30 +178,34 @@ EOF
 	die $!;
     }
 
+    diag "Waiting until zookeeper is running...\n";
     my $zookeeper_running;
-    for(1..100) {
-	my $reaped_pid = waitpid($zookeeper_pid, WNOHANG);
-	if ($reaped_pid) {
-	    warn "Zookeeper process $zookeeper_pid prematurely exited";
-	    last;
+    {
+	my $MAX_TRIES = 100;
+	for my $try (1..$MAX_TRIES) {
+	    my $reaped_pid = waitpid($zookeeper_pid, WNOHANG);
+	    if ($reaped_pid) {
+		warn "Zookeeper process $zookeeper_pid prematurely exited";
+		last;
+	    }
+	    my @check_cmd = ($java,
+			     "-Dzookeeper.log.dir=$zookeeper_logdir", 
+			     "-Dzookeeper.root.logger=INFO,ROLLINGFILE",
+			     "-cp", $classpath,
+			     # $jvmflags
+			     "org.apache.zookeeper.client.FourLetterWordMain",
+			     "localhost", $zookeeper_port, "srvr");
+	    my $ret;
+	    my $success = run(\@check_cmd, '2>', '/dev/null', '>', \$ret);
+	    if ($success && $ret =~ /^Mode: standalone/m) {
+		diag "Zookeeper is running:\n$ret";
+		$zookeeper_running = 1;
+	    }
+	    last if $zookeeper_running;
+	    if ($try < $MAX_TRIES) {
+		Time::HiRes::sleep(0.1);
+	    }
 	}
-	my @check_cmd = ($java,
-			 "-Dzookeeper.log.dir=$zookeeper_logdir", 
-			 "-Dzookeeper.root.logger=INFO,ROLLINGFILE",
-			 "-cp", $classpath,
-			 # $jvmflags
-			 "org.apache.zookeeper.client.FourLetterWordMain",
-			 "localhost", $zookeeper_port, "srvr");
-	my $ret;
-	my $success = run(\@check_cmd, '2>', '/dev/null', '>', \$ret);
-	if ($success && $ret =~ /^Mode: standalone/m) {
-	    diag "Zookeeper is running:\n$ret";
-	    $zookeeper_running = 1;
-	} else {
-	    diag "Zookeeper is not yet running:\n$ret\n";
-	}
-	last if $zookeeper_running;
-	Time::HiRes::sleep(0.1);
     }
     die "zookeeper not running" if !$zookeeper_running;
     return {
@@ -239,8 +251,19 @@ EOF
 	exec @cmd;
 	die $!;
     }
-    diag "Waiting until kafka broker is (possibly) settled...\n"; # XXX how to know for sure?
-    sleep 3;
+
+    diag "Waiting until kafka broker is running...\n";
+    {
+	my $MAX_TRIES = 100;
+	for my $try (1..$MAX_TRIES) {
+	    my $sock = IO::Socket->new(PeerHost => "localhost", PeerPort => $kafka_port, Domain => IO::Socket::AF_INET);
+	    last if $sock;
+	    if ($try < $MAX_TRIES) {
+		Time::HiRes::sleep(0.1);
+	    }
+	}
+    }
+
     return {
 	port => $kafka_port,
 	pid  => $kafka_pid,
