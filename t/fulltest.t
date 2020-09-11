@@ -22,11 +22,11 @@ use Kafka::Librd qw();
 
 # global conf
 my $java = 'java';
-my $kafka_dir = "$ENV{HOME}/work2/kafka_2.12-2.1.1";
+my $kafka_dir = "/opt/kafka";
 my $sample_topic = 'sampleTopic';
 
 if (!-d $kafka_dir) {
-    plan skip_all => 'No kafka server directory available, cannot test';
+    plan skip_all => "No kafka server directory available (expected in $kafka_dir), cannot test";
 }
 
 my $zookeeper_info = start_zookeeper();
